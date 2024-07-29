@@ -28,6 +28,13 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   @SubscribeMessage('message')
   handleMessage(client: Socket, payload: any): void {
+    console.log('Received message:', payload); // 수신된 메시지 확인
     this.server.emit('message', payload); // 모든 클라이언트에게 메시지 전송
+  }
+
+  // 추가: 이미지 메시지를 처리하는 메소드
+  @SubscribeMessage('image')
+  handleImage(client: Socket, payload: any): void {
+    this.server.emit('message', payload); // 이미지 메시지를 모든 클라이언트에게 전송
   }
 }
