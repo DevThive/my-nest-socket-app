@@ -1,4 +1,3 @@
-// src/chat/chat.gateway.ts
 import {
   WebSocketGateway,
   WebSocketServer,
@@ -20,13 +19,11 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private rooms: { [key: string]: Set<Socket> } = {}; // 방 관리
   private users: { [key: string]: string } = {}; // 사용자 관리 (소켓 ID와 사용자 이름 매핑)
-  private nicknameList = ['Alice', 'Bob', 'Charlie', 'David', 'Eva']; // 랜덤 닉네임 목록
 
   handleConnection(client: Socket) {
     console.log('New client connected:', client.id);
   }
 
-  // src/chat/chat.gateway.ts
   handleDisconnect(client: Socket) {
     console.log('Client disconnected:', client.id);
 
@@ -46,37 +43,29 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     // 방 목록 및 사용자 목록 업데이트
     this.server.emit('updateRooms', this.getActiveRooms());
-    this.server.emit('updateUsers', this.getActiveUsers()); // 사용자 목록 업데이트
+    this.server.emit('updateUsers', this.getActiveUsers());
   }
 
   @SubscribeMessage('join')
-  handleJoinRoom(client: Socket, room: string): void {
+  handleJoinRoom(
+    client: Socket,
+    { room, username }: { room: string; username: string },
+  ): void {
     if (!this.rooms[room]) {
       this.rooms[room] = new Set<Socket>(); // 방이 없으면 새로 생성
     }
     this.rooms[room].add(client); // 클라이언트를 방에 추가
     client.join(room); // 소켓을 방에 추가
-    console.log(`Client ${client.id} joined room: ${room}`);
+    console.log(`Client ${client.id} joined room: ${room} as ${username}`);
 
-    // 랜덤 닉네임 생성 및 중복 체크
-    let randomNickname;
-    do {
-      randomNickname = this.getRandomNickname();
-    } while (Object.values(this.users).includes(randomNickname)); // 중복된 닉네임이 있을 경우 재시도
-
-    this.users[client.id] = randomNickname; // 클라이언트 ID와 랜덤 닉네임 매핑
+    this.users[client.id] = username; // 클라이언트 ID와 사용자 이름 매핑
 
     // 방 목록 및 사용자 목록 업데이트
     this.server.emit('updateRooms', this.getActiveRooms());
     this.server.emit('updateUsers', this.getActiveUsers());
 
     // 새로운 유저가 들어왔음을 다른 클라이언트에 알림
-    this.server.emit('userJoined', { id: client.id, username: randomNickname });
-  }
-
-  private getRandomNickname(): string {
-    const randomIndex = Math.floor(Math.random() * this.nicknameList.length);
-    return this.nicknameList[randomIndex];
+    this.server.emit('userJoined', { id: client.id, username });
   }
 
   private getActiveRooms() {
@@ -97,6 +86,27 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ): void {
     console.log('Received message:', payload); // 수신된 메시지 확인
     this.server.to(payload.room).emit('message', payload); // 해당 방의 클라이언트에게 메시지 전송
+  }
+
+  @SubscribeMessage('privateMessage')
+  handlePrivateMessage(
+    client: Socket,
+    payload: { from: string; to: string; message: string },
+  ): void {
+    const toClient = this.getClientByUsername(payload.to);
+    if (toClient) {
+      this.server.to(toClient.id).emit('privateMessage', {
+        from: payload.from,
+        message: payload.message,
+      });
+    }
+  }
+
+  private getClientByUsername(username: string): Socket | null {
+    const clientId = Object.keys(this.users).find(
+      (id) => this.users[id] === username,
+    );
+    return clientId ? this.server.sockets.sockets.get(clientId) || null : null;
   }
 
   @SubscribeMessage('getUsers')
