@@ -4,8 +4,13 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // CORS 활성화
+  // CORS 및 Referrer-Policy 설정
   app.enableCors();
+
+  app.use((req, res, next) => {
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    next();
+  });
 
   await app.listen(4000);
 }
