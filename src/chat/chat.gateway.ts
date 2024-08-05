@@ -6,6 +6,7 @@ import {
   OnGatewayDisconnect,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
+import { RedisService } from '../redis/redis.service'; // RedisService를 임포트합니다.
 
 @WebSocketGateway({
   cors: {
@@ -19,6 +20,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private rooms: { [key: string]: Set<Socket> } = {}; // 방 관리
   private users: { [key: string]: string } = {}; // 사용자 관리 (소켓 ID와 사용자 이름 매핑)
+
+  constructor(private readonly redisService: RedisService) {} // RedisService 주입
 
   handleConnection(client: Socket) {
     console.log('New client connected:', client.id);
@@ -47,10 +50,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('join')
-  handleJoinRoom(
+  async handleJoinRoom(
     client: Socket,
     { room, username }: { room: string; username: string },
-  ): void {
+  ): Promise<void> {
     if (!this.rooms[room]) {
       this.rooms[room] = new Set<Socket>(); // 방이 없으면 새로 생성
     }
@@ -66,6 +69,12 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     // 새로운 유저가 들어왔음을 다른 클라이언트에 알림
     this.server.emit('userJoined', { id: client.id, username });
+
+    // Redis에 방 정보 저장
+    await this.redisService.saveMessage(room, {
+      user: username,
+      action: 'joined',
+    });
   }
 
   private getActiveRooms() {
@@ -80,23 +89,35 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('message')
-  handleMessage(
+  async handleMessage(
     client: Socket,
     payload: { room: string; user: string; text: string },
-  ): void {
+  ): Promise<void> {
     console.log('Received message:', payload); // 수신된 메시지 확인
     this.server.to(payload.room).emit('message', payload); // 해당 방의 클라이언트에게 메시지 전송
+
+    // Redis에 메시지 저장
+    await this.redisService.saveMessage(payload.room, payload);
   }
 
   @SubscribeMessage('privateMessage')
-  handlePrivateMessage(
+  async handlePrivateMessage(
     client: Socket,
     payload: { from: string; to: string; message: string },
-  ): void {
+  ): Promise<void> {
     const toClient = this.getClientByUsername(payload.to);
     if (toClient) {
+      // 상대방에게 메시지 전송
       this.server.to(toClient.id).emit('privateMessage', {
         from: payload.from,
+        message: payload.message,
+      });
+
+      // Redis에 메시지 저장 (5분 동안 유지)
+      const chatKey = `${payload.from}-${payload.to}`;
+      await this.redisService.saveMessage(chatKey, {
+        from: payload.from,
+        to: payload.to,
         message: payload.message,
       });
     }
