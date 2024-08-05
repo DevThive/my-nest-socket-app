@@ -49,6 +49,25 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.server.emit('updateUsers', this.getActiveUsers());
   }
 
+  @SubscribeMessage('createRoom')
+  async handleCreateRoom(client: Socket, roomName: string): Promise<void> {
+    if (!this.rooms[roomName]) {
+      this.rooms[roomName] = new Set<Socket>(); // 방이 없으면 새로 생성
+      console.log(`Room created: ${roomName}`);
+
+      // 방 리스트 업데이트
+      this.server.emit('updateRooms', this.getActiveRooms());
+
+      // Redis에 방 정보 저장
+      await this.redisService.saveMessage(roomName, {
+        action: 'created',
+      });
+    } else {
+      console.log(`Room ${roomName} already exists.`);
+      client.emit('roomExists', roomName); // 방이 이미 존재하는 경우 클라이언트에 알림
+    }
+  }
+
   @SubscribeMessage('join')
   async handleJoinRoom(
     client: Socket,
@@ -57,6 +76,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (!this.rooms[room]) {
       this.rooms[room] = new Set<Socket>(); // 방이 없으면 새로 생성
     }
+
     this.rooms[room].add(client); // 클라이언트를 방에 추가
     client.join(room); // 소켓을 방에 추가
     console.log(`Client ${client.id} joined room: ${room} as ${username}`);
@@ -78,7 +98,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   private getActiveRooms() {
-    return Object.keys(this.rooms).map((room) => ({ name: room }));
+    return Object.keys(this.rooms).map((room) => ({
+      name: room,
+      userCount: this.rooms[room].size, // 방에 있는 사용자 수 추가
+    }));
   }
 
   private getActiveUsers() {
@@ -144,5 +167,11 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     payload: { room: string; user: string; image: string },
   ): void {
     this.server.to(payload.room).emit('message', payload); // 해당 방의 클라이언트에게 이미지 메시지 전송
+  }
+
+  @SubscribeMessage('checkRoom')
+  handleCheckRoom(client: Socket, roomName: string): void {
+    const userCount = this.rooms[roomName] ? this.rooms[roomName].size : 0;
+    client.emit('roomStatus', { roomName, userCount });
   }
 }
